@@ -25,18 +25,21 @@ class KoboMetadataImpl:
     def __init__(self, plugin):
         self.plugin = plugin
 
+    def _get_url_language_component(self, prefs : Dict[str, Any]) -> str:
+        language = prefs["language"]
+        if language == "all":
+            return ""
+        else:
+            return f"{language}/"
+
     def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, Any]) -> str:
         query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
         if prefs["only_light_novels"] and prefs["language"] == "ja" and prefs["country"] == "jp":
             query["id"] = "dac63710-e136-4309-ac7f-d517e2202171"  # Kobo tag for light novels in the Japanese store
-        return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?{urlencode(query)}"
+        return f"{self.BASE_URL}{prefs['country']}/{self._get_url_language_component(prefs)}search?{urlencode(query)}"
 
     def get_kobo_url(self, kobo_id: str, prefs: Dict[str, Any]) -> str:
-        if prefs["language"] == "all":
-            url = f"{self.BASE_URL}{prefs['country']}/search?query={kobo_id}"
-        else:
-            url = f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?query={kobo_id}"
-        return url
+        return f"{self.BASE_URL}{prefs['country']}/{self._get_url_language_component(prefs)}search?query={kobo_id}"
 
     @staticmethod
     def check_isbn_valid(isbn: str) -> bool:
@@ -193,11 +196,11 @@ class KoboMetadataImpl:
             try:
                 page, is_search = self._get_webpage(url, timeout, log)
                 if page is None or is_search:
-                    log.info(f"KoboMetadata::fetch_metadata: Could not get url: {url}")
-                    return []
+                    log.info(f"KoboMetadata::fetch_metadata: Could not get url: {url} - skipping")
+                    continue
                 metadata = self._parse_book_page(page, prefs, log)
             except Exception as e:
-                log.error(f"KoboMetadata::fetch_metadata: Got exception looking up metadata: {e}")
+                log.error(f"KoboMetadata::fetch_metadata: Got exception looking up metadata: {e} - skipping")
                 continue
 
             if metadata:
@@ -236,6 +239,9 @@ class KoboMetadataImpl:
             return [url]
 
         results = self._parse_search_page(page, log)
+        if not results:
+            log.error("KoboMetadata::perform_query: No search results found")
+            return []
 
         page_num = 2
         # a reasonable default for how many we should try before we give up
@@ -245,8 +251,12 @@ class KoboMetadataImpl:
             page, is_search = self._get_webpage(url, timeout, log)
             if not page or not is_search:
                 log.error(f"KoboMetadata::perform_query: Could not get webpage: {url} - skipping this page")
+                page_num += 1
                 continue
-            results.extend(self._parse_search_page(page, log))
+            new_results = self._parse_search_page(page, log)
+            if not new_results:
+                break
+            results.extend(new_results)
             page_num += 1
 
         return results[:max_matches]
