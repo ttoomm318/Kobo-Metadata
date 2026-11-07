@@ -3,7 +3,7 @@ import re
 import string
 import time
 from queue import Queue
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from calibre.ebooks.metadata import check_isbn
@@ -25,13 +25,13 @@ class KoboMetadataImpl:
     def __init__(self, plugin):
         self.plugin = plugin
 
-    def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, any]) -> str:
+    def get_search_url(self, search_str: str, page_number: int, prefs: Dict[str, Any]) -> str:
         query = {"query": search_str, "fcmedia": "Book", "pageNumber": page_number, "fclanguages": prefs["language"]}
         if prefs["only_light_novels"] and prefs["language"] == "ja" and prefs["country"] == "jp":
             query["id"] = "dac63710-e136-4309-ac7f-d517e2202171"  # Kobo tag for light novels in the Japanese store
         return f"{self.BASE_URL}{prefs['country']}/{prefs['language']}/search?{urlencode(query)}"
 
-    def get_kobo_url(self, kobo_id: str, prefs: Dict[str, any]) -> str:
+    def get_kobo_url(self, kobo_id: str, prefs: Dict[str, Any]) -> str:
         if prefs["language"] == "all":
             url = f"{self.BASE_URL}{prefs['country']}/search?query={kobo_id}"
         else:
@@ -49,8 +49,8 @@ class KoboMetadataImpl:
         result_queue: Queue,
         title: str,
         authors: List[str],
-        identifiers: Dict[str, any],
-        prefs: Dict[str, any],
+        identifiers: Dict[str, Any],
+        prefs: Dict[str, Any],
         timeout: int,
         log: Log,
     ) -> None:
@@ -95,11 +95,11 @@ class KoboMetadataImpl:
         self,
         title: str,
         authors: List[str],
-        identifiers: Dict[str, any],
-        prefs: Dict[str, any],
+        identifiers: Dict[str, Any],
+        prefs: Dict[str, Any],
         timeout: int,
         log: Log,
-    ) -> None:
+    ) -> str:
         log.info(f"KoboMetadata::get_cover_url: title: {title}, authors: {authors}, identifiers: {identifiers}")
         urls = []
 
@@ -118,7 +118,7 @@ class KoboMetadataImpl:
 
         if not urls:
             log.error("KoboMetadata::get_cover_url:: No search results")
-            return
+            return ""
 
         url = urls[0]
         page, is_search = self._get_webpage(url, timeout, log)
@@ -169,22 +169,23 @@ class KoboMetadataImpl:
             return (None, False)
 
     def _perform_isbn_search(
-        self, isbn: int, max_matches: int, prefs: Dict[str, any], timeout: int, log: Log
+        self, isbn: str, max_matches: int, prefs: Dict[str, Any], timeout: int, log: Log
     ) -> List[str]:
         isbn = check_isbn(isbn)
 
         if isbn:
             log.info(f"KoboMetadata::perform_isbn_search: Getting metadata with isbn: {isbn}")
             return self._perform_query(isbn, max_matches, prefs, timeout, log)
+        return []
 
     def _perform_search(
-        self, title: str, authors: List[str], max_matches: int, prefs: Dict[str, any], timeout: int, log: Log
+        self, title: str, authors: List[str], max_matches: int, prefs: Dict[str, Any], timeout: int, log: Log
     ) -> List[str]:
         query = self._generate_query(title, authors, prefs)
         log.info(f"KoboMetadata::perform_search: Searching with query: {query}")
         return self._perform_query(query, max_matches, prefs, timeout, log)
 
-    def _fetch_metadata(self, urls: List[str], prefs: Dict[str, any], timeout: int, log: Log) -> List[Metadata]:
+    def _fetch_metadata(self, urls: List[str], prefs: Dict[str, Any], timeout: int, log: Log) -> List[Metadata]:
         results = []
         index = 0
         for url in urls:
@@ -193,11 +194,11 @@ class KoboMetadataImpl:
                 page, is_search = self._get_webpage(url, timeout, log)
                 if page is None or is_search:
                     log.info(f"KoboMetadata::fetch_metadata: Could not get url: {url}")
-                    return
+                    return []
                 metadata = self._parse_book_page(page, prefs, log)
             except Exception as e:
                 log.error(f"KoboMetadata::fetch_metadata: Got exception looking up metadata: {e}")
-                return
+                continue
 
             if metadata:
                 metadata.source_relevance = index
@@ -207,7 +208,7 @@ class KoboMetadataImpl:
             index += 1
         return results
 
-    def _generate_query(self, title: str, authors: list[str], prefs: Dict[str, any]) -> str:
+    def _generate_query(self, title: str, authors: list[str], prefs: Dict[str, Any]) -> str:
         # Remove leading zeroes from the title if configured
         # Kobo search doesn't do a great job of matching numbers
         title = " ".join(
@@ -221,7 +222,7 @@ class KoboMetadataImpl:
         return title
 
     # Returns a list of urls that match our search
-    def _perform_query(self, query: str, max_matches: int, prefs: Dict[str, any], timeout: int, log: Log) -> list[str]:
+    def _perform_query(self, query: str, max_matches: int, prefs: Dict[str, Any], timeout: int, log: Log) -> list[str]:
         url = self.get_search_url(query, 1, prefs)
         log.info(f"KoboMetadata::perform_query: Searching for book with url: {url}")
 
@@ -242,7 +243,9 @@ class KoboMetadataImpl:
         while len(results) < max_matches and page_num < max_page_num:
             url = self.get_search_url(query, page_num, prefs)
             page, is_search = self._get_webpage(url, timeout, log)
-            assert page and is_search
+            if not page or not is_search:
+                log.error(f"KoboMetadata::perform_query: Could not get webpage: {url} - skipping this page")
+                continue
             results.extend(self._parse_search_page(page, log))
             page_num += 1
 
@@ -268,7 +271,7 @@ class KoboMetadataImpl:
         return []
 
     # Given a page that has the details of a book, parse and return the Metadata
-    def _parse_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
+    def _parse_book_page(self, page: html.Element, prefs: Dict[str, Any], log: Log) -> Optional[Metadata]:
         # Kobo is moving their book pages to a new layout, starting with the Japanese store
         if page.xpath("//h1[@data-testid='book-title']"):
             log.info("KoboMetadata::parse_book_page: Detected new book page")
@@ -293,7 +296,7 @@ class KoboMetadataImpl:
 
         return metadata
 
-    def _parse_old_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
+    def _parse_old_book_page(self, page: html.Element, prefs: Dict[str, Any], log: Log) -> Metadata:
         title_elements = page.xpath("//h1[@class='title product-field']")
         title = title_elements[0].text.strip()
         log.info(f"KoboMetadata::parse_book_page: Got title: {title}")
@@ -330,15 +333,17 @@ class KoboMetadataImpl:
                 data = x.xpath("span")[0].text if x.xpath("span") else None
 
                 if descriptor == "Release Date:" or descriptor == "発売日：":  # japanese colon is different
-                    if prefs["language"] == "ja":
+                    if data and prefs["language"] == "ja":
                         date_match = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日", data)
-                        data = f"{date_match.groups(0)[0]}-{date_match.groups(0)[1]}-{date_match.groups(0)[2]}"
+                        if date_match:
+                            data = f"{date_match.groups(0)[0]}-{date_match.groups(0)[1]}-{date_match.groups(0)[2]}"
                     if data:
                         metadata.pubdate = parse_only_date(data)
                         log.info(f"KoboMetadata::parse_book_page: Got pubdate: {metadata.pubdate}")
 
                 elif descriptor == "ISBN:" or descriptor == "Book ID:" or descriptor == "書籍ID：":
-                    self._set_isbn(metadata, data, prefs, log)
+                    if data:
+                        self._set_isbn(metadata, data, prefs, log)
 
                 elif descriptor == "Language:" or descriptor == "言語：":
                     if prefs["language"] == "ja":
@@ -364,7 +369,7 @@ class KoboMetadataImpl:
     # from the data embedded in the page: the synopsis is only filled in by javascript, the "About this book" section
     # is localised (and not always correctly, e.g. it has Turkish labels on the Japanese store), and the genre chips
     # leave out the parent categories that the tags on the old book page included.
-    def _parse_new_book_page(self, page: html.Element, prefs: Dict[str, any], log: Log) -> Metadata:
+    def _parse_new_book_page(self, page: html.Element, prefs: Dict[str, Any], log: Log) -> Metadata:
         title = page.xpath("//h1[@data-testid='book-title']")[0].text_content().strip()
         log.info(f"KoboMetadata::parse_new_book_page: Got title: {title}")
 
@@ -437,7 +442,7 @@ class KoboMetadataImpl:
 
     # Next.js embeds the data used to render the page as a stream of rows, split across self.__next_f.push([1, "..."])
     # calls. Returns the "itemDetails" object that describes the book, or None if it could not be found.
-    def _get_item_details(self, page: html.Element) -> Optional[Dict[str, any]]:
+    def _get_item_details(self, page: html.Element) -> Optional[Dict[str, Any]]:
         payload = ""
         for script in page.xpath("//script[contains(text(), 'self.__next_f.push(')]"):
             for match in re.finditer(r"self\.__next_f\.push\(\s*", script.text):
@@ -452,15 +457,15 @@ class KoboMetadataImpl:
         text_row_header = re.compile(rb"([0-9a-f]+):T([0-9a-f]+),")
         pos = 0
         while pos < len(data):
-            match = text_row_header.match(data, pos)
-            if match:
-                pos = match.end() + int(match.group(2), 16)
-                text_rows[match.group(1).decode()] = data[match.end() : pos].decode("utf-8", errors="replace")
+            header_match = text_row_header.match(data, pos)
+            if header_match:
+                pos = header_match.end() + int(header_match.group(2), 16)
+                text_rows[header_match.group(1).decode()] = data[header_match.end() : pos].decode("utf-8", errors="replace")
             else:
                 newline = data.find(b"\n", pos)
                 pos = len(data) if newline == -1 else newline + 1
 
-        def resolve_references(obj: Dict[str, any]) -> Dict[str, any]:
+        def resolve_references(obj: Dict[str, Any]) -> Dict[str, Any]:
             return {key: self._resolve_page_data_value(value, text_rows) for key, value in obj.items()}
 
         decoder = json.JSONDecoder(object_hook=resolve_references)
@@ -473,7 +478,7 @@ class KoboMetadataImpl:
     # Strings in the page data that start with "$" are references, such as "$3a" for the text row with id 3a, or
     # "$undefined". Strings that really start with "$" are escaped as "$$".
     @staticmethod
-    def _resolve_page_data_value(value: any, text_rows: Dict[str, str]) -> any:
+    def _resolve_page_data_value(value: Any, text_rows: Dict[str, str]) -> Any:
         if not isinstance(value, str) or not value.startswith("$"):
             return value
         if value.startswith("$$"):
@@ -482,7 +487,7 @@ class KoboMetadataImpl:
 
     # Returns the name of every category along the paths of the book's categories (e.g. 小説・文学 > ライトノベル), which
     # is what the tags on the old book page were made of. Returns an empty set if the categories can't be read.
-    def _get_category_names(self, item_details: Dict[str, any], locale: str) -> set[str]:
+    def _get_category_names(self, item_details: Dict[str, Any], locale: str) -> set[str]:
         names = set()
         try:
             for path in item_details["browseCategories"]:
@@ -494,7 +499,7 @@ class KoboMetadataImpl:
 
     # Category names are in English, with translations keyed by language or by language and region (e.g. ja, zh-TW)
     @staticmethod
-    def _get_localised_name(name: Dict[str, any], locale: str) -> Optional[str]:
+    def _get_localised_name(name: Dict[str, Any], locale: str) -> Optional[str]:
         translations = {key.lower(): value for key, value in (name.get("translations") or {}).items() if value}
         language = locale.split("-")[0]
         for key in (locale, language):
@@ -506,7 +511,7 @@ class KoboMetadataImpl:
         return name.get("default")
 
     # Kobo lists its own book id in place of the isbn for some books (e.g. on the Japanese store)
-    def _set_isbn(self, metadata: Metadata, isbn: str, prefs: Dict[str, any], log: Log) -> None:
+    def _set_isbn(self, metadata: Metadata, isbn: str, prefs: Dict[str, Any], log: Log) -> None:
         if prefs["differentiate_kobo_isbn"] and not KoboMetadataImpl.check_isbn_valid(isbn):
             metadata.set_identifier("kobo", isbn)
             log.info(f"KoboMetadata::set_isbn: Got kobo book id: {isbn}")
@@ -514,8 +519,8 @@ class KoboMetadataImpl:
             metadata.isbn = isbn
             log.info(f"KoboMetadata::set_isbn: Got isbn: {metadata.isbn}")
 
-    def _parse_book_page_for_cover(self, page: html.Element, prefs: Dict[str, any], log: Log) -> str:
-        cover_url = None
+    def _parse_book_page_for_cover(self, page: html.Element, prefs: Dict[str, Any], log: Log) -> str:
+        cover_url = ""
         # Old and new book page layouts respectively
         cover_elements = page.xpath("//img[contains(@class, 'cover-image')]") or page.xpath(
             "//div[@data-testid='book-metadata-details']//img[@data-testid='cover']"
@@ -537,9 +542,9 @@ class KoboMetadataImpl:
         return cover_url
 
     # Returns the set of words in the title that are also blacklisted
-    def _check_title_blacklist(self, title: str, prefs: Dict[str, any], log: Log) -> set[str]:
+    def _check_title_blacklist(self, title: str, prefs: Dict[str, Any], log: Log) -> set[str]:
         if not prefs["title_blacklist"]:
-            return None
+            return set()
 
         blacklisted_words = {x.strip().lower() for x in prefs["title_blacklist"].split(",")}
         log.info(f"KoboMetadata::_check_title_blacklist: blacklisted title words: {blacklisted_words}")
@@ -548,9 +553,9 @@ class KoboMetadataImpl:
         return blacklisted_words.intersection(title_str.lower().split(" "))
 
     # Returns the set of tags that are also blacklisted
-    def _check_tag_blacklist(self, tags: set[str], prefs: Dict[str, any], log: Log) -> set[str]:
+    def _check_tag_blacklist(self, tags: set[str], prefs: Dict[str, Any], log: Log) -> set[str]:
         if not prefs["tag_blacklist"]:
-            return None
+            return set()
 
         blacklisted_tags = {x.strip().lower() for x in prefs["tag_blacklist"].split(",")}
         log.info(f"KoboMetadata::_check_tag_blacklist: blacklisted tags: {blacklisted_tags}")
